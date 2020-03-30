@@ -1,0 +1,34 @@
+## Design
+The experiment is not succssful but I will record the detail about my thought.
+
+Inspiring from off-policy policy gradient method, I intend to try use off-policy method train 
+an actor critic. 
+
+I understand that using bootstrap, functional method plus off-policy is called deadly triads in 
+Suttons' RL book. I still want to give a try.
+
+In this experiement, there is only one model, Actor. 
+It has 2 outcomes, both action probabilites and V estimation.
+
+The behavior policy is epsilon-Actor.  That is the same formulation from epsilon-greedy methods.
+While behaving, with probability 90%, the policy chooses the action based on its probability output like
+in normal actor-critic method. With 10% probability however, the policy chooses randomly among the action
+space, i.e, {0,1}.
+
+A buffer inside the class will record the observation of states, 
+reward (because its always 1 in this case I make it constant), probability of the action taken.
+
+Then, the target policy is when we do not have epsilon. When buffer hits an end in episode, it will 
+make the model learn. Recalculating each p based on stored observations, using stored p and simple algebra
+to generate rho, and update the model. buffer will also only keep the latest 100 records.
+
+After training, model is automatically evaluated by itself.
+
+## Result:
+
+The learning never takes place but the loss can. It is not diverging like the one usually met in REINFORCE,
+but a natural behavior that the thing is converging to a place that is never a best policy.
+
+## Improvement:
+
+Delete the V part of the actor model, and create a off-policy REINFORCE instead.
