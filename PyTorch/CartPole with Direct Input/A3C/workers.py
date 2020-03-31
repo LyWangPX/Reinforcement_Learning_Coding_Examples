@@ -1,4 +1,4 @@
-def worker(state_dict):
+def worker(state_dict, q):
     import gym
     import torch
     import numpy as np
@@ -28,12 +28,10 @@ def worker(state_dict):
     actor = Actor()
     actor.load_state_dict(state_dict)
     actor.to(device)
-    optimizer_actor= torch.optim.Adam(actor.parameters(), lr=0.003)
     gamma = 0.99
     steps = []
     eps = np.finfo(np.float32).eps.item()
     for episode in range(1):
-        I = 1
         action_log_history = []
         V_history = []
         for step in range(200):
@@ -65,6 +63,5 @@ def worker(state_dict):
                 for delta, log_prob in zip(Delta, action_log_history):
                     Actor_Loss -= log_prob*delta.detach()
                 loss = Critic_Loss + Actor_Loss
-                return loss
-        if np.mean(steps[-20:]) > 190:
-            break
+                q.put(loss.detach())
+                break
