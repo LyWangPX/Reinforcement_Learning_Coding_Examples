@@ -7,7 +7,8 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import torch.multiprocessing as mp
 from workers import worker
-impot SharedAdam
+from evaluate import evaluate
+import SharedAdam
 
 class Actor(torch.nn.Module):
     def __init__(self):
@@ -25,31 +26,18 @@ class Actor(torch.nn.Module):
         V = F.relu(self.fc4(x))
         return action, V
 
-    def evaluate(self):
-        env = gym.make('CartPole-v0')
-        obs = env.reset()
-        for step in range(200):
-            obs = np.reshape(obs, [1, -1])
-            obs = Variable(torch.from_numpy(obs).float())
-            action_probability = model(obs)
-            action = np.random.choice(2, p=torch.exp(action_probability)[0].detach().numpy())
-            obs, reward, done, info = env.step(action)
-            if done:
-                self.steps.append(step)
-                break
-
     def draw(self):
         mid = []
-        interval = 30
+        interval = 3
         plt.style.use('dark_background')
-        for i in range(len(model.steps) - interval):
-            mid.append(np.mean(model.steps[i:i + interval + 1]))
+        for i in range(len(self.steps) - interval):
+            mid.append(np.mean(self.steps[i:i + interval + 1]))
         plt.figure(figsize=(10, 10))
-        plt.title('Target Policy off-policy REINFORCE on CartPole_V0', fontsize='xx-large')
+        plt.title('Performance of A3C with Shared Adam Optimizer on CartPole_V0', fontsize='xx-large')
         plt.xlabel('Episodes', fontsize='xx-large')
         plt.ylabel('Rewards', fontsize='xx-large')
-        x_fit = list(range(len(model.steps) - interval))
-        plt.plot(x_fit, model.steps[interval:], '-', c='gray', label='Episode-Wise data')
+        x_fit = list(range(len(self.steps) - interval))
+        plt.plot(x_fit, self.steps[interval:], '-', c='gray', label='Episode-Wise data')
         plt.plot(mid, '-', c='green', linewidth=5, label='Moving Average')
         plt.legend(loc="best", prop={'size': 12})
         plt.show()
@@ -57,27 +45,26 @@ class Actor(torch.nn.Module):
 
 if __name__ == '__main__':
     q = mp.Queue()
-    num_workers = 1
+    num_workers = 6
     processes = []
     shared_model = Actor()
     shared_model.share_memory()
-    optimizer = my_optim.SharedAdam(shared_model.parameters(), lr=0.003)
+    optimizer = SharedAdam.SharedAdam(shared_model.parameters(), lr=0.003)
     optimizer.share_memory()
-    for episode in range(100):
-        print(f'episodes{ episode}',end='\r')
+    for episode in range(1000):
+        p = mp.Process(target=evaluate, args=(shared_model, q))
+        processes.append(p)
+        p.start()
+        print(f'Training on episode {episode}')
         for worker_id in range(num_workers):
-            p = mp.Process(target = worker, args = (model, q))
+            p = mp.Process(target = worker, args = (shared_model, optimizer))
             processes.append(p)
             p.start()
         for p in processes:
             p.join()
-        model.zero_grad()
-        loss_stack = []
-        while not q.empty():
-            loss_stack.append(q.get())
-        loss = torch.stack(loss_stack).sum()
-        loss.backward()
-        optimizer_actor.step()
-        model.evaluate()
+        shared_model.steps.append(q.get())
+        if np.mean(shared_model.steps[-20:]) > 190:
+            break
+    shared_model.draw()
 
 
