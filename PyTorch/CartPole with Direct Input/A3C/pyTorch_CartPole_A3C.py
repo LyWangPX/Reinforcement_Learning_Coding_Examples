@@ -6,6 +6,7 @@ from torch.nn import Linear, ReLU
 import torch.nn.functional as F
 from torch.autograd import Variable
 import torch.multiprocessing as mp
+from .workers import worker
 
 class Actor(torch.nn.Module):
     def __init__(self):
@@ -21,8 +22,6 @@ class Actor(torch.nn.Module):
         action = F.log_softmax(self.fc3(x), dim=-1)
         V = F.relu(self.fc4(x))
         return action, V
-def train (worker_id, dict):
-    dict[worker_id] = worker_id*100
 
 if __name__ == '__main__':
     manager = mp.Manager()
