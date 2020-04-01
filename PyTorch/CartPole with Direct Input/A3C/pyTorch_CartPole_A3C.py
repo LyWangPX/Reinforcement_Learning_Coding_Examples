@@ -54,6 +54,7 @@ class Actor(torch.nn.Module):
 if __name__ == '__main__':
     device = 'cpu'
     # Do not change this unless you have multiple GPU.
+    # update test
     q = mp.Queue()
     num_workers = 5
     processes = []
