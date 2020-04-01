@@ -63,7 +63,7 @@ def worker(shared_model, optimizer):
                 Critic_Loss = []
                 Delta = []
                 for monte_carlo_return, V in zip(reward_list, V_history):
-                    Critic_Loss.append(F.smooth_l1_loss(V, torch.tensor([[monte_carlo_return]])))
+                    Critic_Loss.append(F.smooth_l1_loss(V, torch.tensor([[monte_carlo_return]]).to(device)))
                     Delta.append(monte_carlo_return - V.detach())
                 Actor_Loss = []
                 entropy = 0

@@ -9,6 +9,7 @@ import torch.multiprocessing as mp
 from workers import worker
 from evaluate import evaluate
 from SharedAdam import SharedAdam
+from time import perf_counter
 
 class Actor(torch.nn.Module):
     def __init__(self):
@@ -51,13 +52,17 @@ class Actor(torch.nn.Module):
 
 
 if __name__ == '__main__':
+    device = 'cpu'
+    # Do not change this unless you have multiple GPU.
     q = mp.Queue()
-    num_workers = 6
+    num_workers = 5
     processes = []
     shared_model = Actor()
+    shared_model.to(device)
     shared_model.share_memory()
     optimizer = SharedAdam(shared_model.parameters(), lr=0.003)
     for episode in range(10000):
+        t1_start = perf_counter()
         p = mp.Process(target=evaluate, args=(shared_model, q))
         processes.append(p)
         p.start()
@@ -71,6 +76,9 @@ if __name__ == '__main__':
         print(f'Training on episode {episode} Step {shared_model.steps[-1]}')
         if np.mean(shared_model.steps[-25:]) == 199:
             break
+        t1_stop = perf_counter()
+        print("Elapsed time during the whole program in seconds:",
+              t1_stop - t1_start)
     shared_model.draw()
     shared_model.step = []
     for episode in range(15):
