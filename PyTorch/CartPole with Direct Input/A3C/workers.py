@@ -49,6 +49,8 @@ def worker(shared_model, optimizer):
             V_history.append(V)
             obs, reward, done, info = env.step(action)
             if done:
+                if step == 199:
+                    break
                 actor.zero_grad()
                 steps.append(step)
                 print(f'episode {episode}, step {step}', end='\r')
@@ -64,9 +66,12 @@ def worker(shared_model, optimizer):
                     Critic_Loss.append(F.smooth_l1_loss(V, torch.tensor([[monte_carlo_return]])))
                     Delta.append(monte_carlo_return - V.detach())
                 Actor_Loss = []
+                entropy = 0
+                for log_p in action_log_history:
+                    entropy -= log_p * torch.exp(log_p)
                 for delta, log_prob in zip(Delta, action_log_history):
                     Actor_Loss.append(-log_prob * delta.detach())
-                loss = torch.stack(Critic_Loss).sum() + torch.stack(Actor_Loss).sum()
+                loss = torch.stack(Critic_Loss).sum() + torch.stack(Actor_Loss).sum() + entropy*0.01
                 loss.backward()
                 ensure_shared_grads(actor, shared_model)
                 optimizer.step()
