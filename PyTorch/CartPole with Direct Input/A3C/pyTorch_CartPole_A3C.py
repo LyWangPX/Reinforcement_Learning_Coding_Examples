@@ -8,7 +8,7 @@ from torch.autograd import Variable
 import torch.multiprocessing as mp
 from workers import worker
 from evaluate import evaluate
-import SharedAdam
+from SharedAdam import SharedAdam
 
 class Actor(torch.nn.Module):
     def __init__(self):
@@ -49,8 +49,7 @@ if __name__ == '__main__':
     processes = []
     shared_model = Actor()
     shared_model.share_memory()
-    optimizer = SharedAdam.SharedAdam(shared_model.parameters(), lr=0.003)
-    optimizer.share_memory()
+    optimizer = SharedAdam(shared_model.parameters(), lr=0.003)
     for episode in range(1000):
         p = mp.Process(target=evaluate, args=(shared_model, q))
         processes.append(p)
@@ -63,7 +62,7 @@ if __name__ == '__main__':
         for p in processes:
             p.join()
         shared_model.steps.append(q.get())
-        if np.mean(shared_model.steps[-20:]) > 190:
+        if np.mean(shared_model.steps[-10:]) > 190:
             break
     shared_model.draw()
 
