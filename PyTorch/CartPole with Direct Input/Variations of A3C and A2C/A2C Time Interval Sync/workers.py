@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 
-def worker(shared_model, optimizer,q):
+def worker(shared_model, optimizer):
     class Actor(torch.nn.Module):
         def __init__(self):
             super(Actor, self).__init__()
@@ -32,15 +32,13 @@ def worker(shared_model, optimizer,q):
     actor = Actor()
     actor.to(device)
     gamma = 0.99
+    steps = []
     eps = np.finfo(np.float32).eps.item()
-    while True:
-        if len(shared_model.steps) > 25:
-            if np.mean(shared_model.steps[-25]) == 199:
-                break
+    for episode in range(1):
         action_log_history = []
         V_history = []
-        actor.load_state_dict(shared_model.state_dict())
         for step in range(200):
+            actor.load_state_dict(shared_model.state_dict())
             # -----lines below are line-corresponding to the original algorithm----
             obs = np.reshape(obs, [1, -1])
             input_actor = Variable(torch.from_numpy(obs).float()).to(device)
@@ -51,11 +49,12 @@ def worker(shared_model, optimizer,q):
             V_history.append(V)
             obs, reward, done, info = env.step(action)
             if done:
-                q.put(step)
-                actor.zero_grad()
-                obs = env.reset()
                 if step == 199:
                     break
+                actor.zero_grad()
+                steps.append(step)
+                print(f'episode {episode}, step {step}', end='\r')
+                obs = env.reset()
                 reward_list = np.ones((step + 1,))
                 for i in range(len(reward_list) - 2, -1, -1):
                     reward_list[i] += reward_list[i + 1] * gamma
@@ -72,7 +71,7 @@ def worker(shared_model, optimizer,q):
                     entropy -= log_p * torch.exp(log_p)
                 for delta, log_prob in zip(Delta, action_log_history):
                     Actor_Loss.append(-log_prob * delta.detach())
-                loss = torch.stack(Critic_Loss).sum() + torch.stack(Actor_Loss).sum() + entropy*0.01
+                loss = torch.stack(Critic_Loss).sum() + torch.stack(Actor_Loss).sum() + entropy * 0.01
                 loss.backward()
                 ensure_shared_grads(actor, shared_model)
                 optimizer.step()

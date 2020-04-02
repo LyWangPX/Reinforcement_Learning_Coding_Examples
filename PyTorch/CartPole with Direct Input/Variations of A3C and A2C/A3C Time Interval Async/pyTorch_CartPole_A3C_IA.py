@@ -12,9 +12,10 @@ from SharedAdam import SharedAdam
 from time import perf_counter
 import time
 
+
 class Actor(torch.nn.Module):
     def __init__(self):
-        super(Actor,self).__init__()
+        super(Actor, self).__init__()
         self.fc1 = Linear(4, 128)
         self.fc2 = Linear(128, 128)
         self.fc3 = Linear(128, 2)
@@ -28,7 +29,7 @@ class Actor(torch.nn.Module):
         V = F.relu(self.fc4(x))
         return action, V
 
-    def draw(self, eval = False):
+    def draw(self, eval=False):
         plt.style.use('dark_background')
         plt.figure(figsize=(10, 10))
         if eval:
@@ -42,7 +43,7 @@ class Actor(torch.nn.Module):
             interval = 3
             for i in range(len(self.steps) - interval):
                 mid.append(np.mean(self.steps[i:i + interval + 1]))
-            plt.title('Performance of A3C with Shared Adam Optimizer on CartPole_V0', fontsize='xx-large')
+            plt.title('Performance of True Episode-Wise A3C on CartPole_V0', fontsize='xx-large')
             plt.xlabel('Episodes', fontsize='xx-large')
             plt.ylabel('Rewards', fontsize='xx-large')
             x_fit = list(range(len(self.steps) - interval))
@@ -63,12 +64,12 @@ if __name__ == '__main__':
     shared_model = Actor()
     shared_model.to(device)
     shared_model.share_memory()
-    optimizer = SharedAdam(shared_model.parameters(), lr=0.003)
+    optimizer = SharedAdam(shared_model.parameters(), lr=0.001)
     p = mp.Process(target=evaluate, args=(shared_model, q))
     processes.append(p)
     p.start()
     for worker_id in range(num_workers):
-        p = mp.Process(target = worker, args = (shared_model, optimizer, q))
+        p = mp.Process(target=worker, args=(shared_model, optimizer, q))
         processes.append(p)
         p.start()
     # for p in processes:
@@ -81,8 +82,9 @@ if __name__ == '__main__':
             print(f'Training on episode {episode} Step {shared_model.steps[-1]}')
             episode += 1
         if len(shared_model.steps) > 25:
-            if np.mean(shared_model.steps[-25]) == 199:
-                p.join()
+            if np.mean(shared_model.steps[-100:]) == 199:
+                for p in processes:
+                    p.terminate()
                 while not q.empty():
                     shared_model.steps.append(q.get())
                     print(f'Training on episode {episode} Step {shared_model.steps[-1]}')
@@ -99,6 +101,4 @@ if __name__ == '__main__':
     while not q.empty():
         shared_model.steps.append(q.get())
     shared_model.steps.sort()
-    shared_model.draw(eval = True)
-
-
+    shared_model.draw(eval=True)
