@@ -6,10 +6,11 @@ from torch.nn import Linear, ReLU
 import torch.nn.functional as F
 from torch.autograd import Variable
 import torch.multiprocessing as mp
-from workers import worker
+from workers_PlayGround import worker
 from evaluate import evaluate
 from SharedAdam import SharedAdam
 from time import perf_counter
+import time
 
 class Actor(torch.nn.Module):
     def __init__(self):
@@ -63,25 +64,32 @@ if __name__ == '__main__':
     shared_model.to(device)
     shared_model.share_memory()
     optimizer = SharedAdam(shared_model.parameters(), lr=0.003)
-    for episode in range(10000):
-        t1_start = perf_counter()
-        p = mp.Process(target=evaluate, args=(shared_model, q))
+    p = mp.Process(target=evaluate, args=(shared_model, q))
+    processes.append(p)
+    p.start()
+    for worker_id in range(num_workers):
+        p = mp.Process(target = worker, args = (shared_model, optimizer, q))
         processes.append(p)
         p.start()
-        for worker_id in range(num_workers):
-            p = mp.Process(target = worker, args = (shared_model, optimizer))
-            processes.append(p)
-            p.start()
-        for p in processes:
-            p.join()
-        shared_model.steps.append(q.get())
-        print(f'Training on episode {episode} Step {shared_model.steps[-1]}')
-        if np.mean(shared_model.steps[-25:]) == 199:
-            break
-        t1_stop = perf_counter()
-        print("Elapsed time during the whole program in seconds:",
-              t1_stop - t1_start)
+    # for p in processes:
+    #     p.join()
+    episode = 0
+
+    while True:
+        if not q.empty():
+            shared_model.steps.append(q.get())
+            print(f'Training on episode {episode} Step {shared_model.steps[-1]}')
+            episode += 1
+        if len(shared_model.steps) > 25:
+            if np.mean(shared_model.steps[-25]) == 199:
+                p.join()
+                while not q.empty():
+                    shared_model.steps.append(q.get())
+                    print(f'Training on episode {episode} Step {shared_model.steps[-1]}')
+                    episode += 1
+                break
     shared_model.draw()
+    # ----evaluation----
     shared_model.step = []
     for episode in range(15):
         for worker_id in range(6):
