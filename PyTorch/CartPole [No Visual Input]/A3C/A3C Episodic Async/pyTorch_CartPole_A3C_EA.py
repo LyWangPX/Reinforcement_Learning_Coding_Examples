@@ -1,16 +1,13 @@
-import gym
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from torch.nn import Linear, ReLU
+from torch.nn import Linear
 import torch.nn.functional as F
-from torch.autograd import Variable
 import torch.multiprocessing as mp
 from workers_PlayGround import worker
 from evaluate import evaluate
 from SharedAdam import SharedAdam
-from time import perf_counter
-import time
+
 
 class Actor(torch.nn.Module):
     def __init__(self):

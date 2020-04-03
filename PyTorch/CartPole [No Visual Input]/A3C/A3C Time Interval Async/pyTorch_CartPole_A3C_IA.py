@@ -1,16 +1,12 @@
-import gym
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from torch.nn import Linear, ReLU
+from torch.nn import Linear
 import torch.nn.functional as F
-from torch.autograd import Variable
 import torch.multiprocessing as mp
-from workers_PlayGround import worker
+from workers import worker
 from evaluate import evaluate
 from SharedAdam import SharedAdam
-from time import perf_counter
-import time
 
 
 class Actor(torch.nn.Module):
@@ -59,7 +55,7 @@ if __name__ == '__main__':
     # Do not change this unless you have multiple GPU.
     # update test
     q = mp.Queue()
-    num_workers = 7
+    num_workers = 15
     processes = []
     shared_model = Actor()
     shared_model.to(device)
@@ -68,8 +64,9 @@ if __name__ == '__main__':
     p = mp.Process(target=evaluate, args=(shared_model, q))
     processes.append(p)
     p.start()
+    T = 300
     for worker_id in range(num_workers):
-        p = mp.Process(target=worker, args=(shared_model, optimizer, q))
+        p = mp.Process(target=worker, args=(shared_model, optimizer, q, T))
         processes.append(p)
         p.start()
     # for p in processes:
@@ -82,7 +79,7 @@ if __name__ == '__main__':
             print(f'Training on episode {episode} Step {shared_model.steps[-1]}')
             episode += 1
         if len(shared_model.steps) > 25:
-            if np.mean(shared_model.steps[-100:]) == 199:
+            if np.mean(shared_model.steps[-50:]) == 199:
                 for p in processes:
                     p.terminate()
                 while not q.empty():
@@ -95,7 +92,7 @@ if __name__ == '__main__':
     shared_model.step = []
     for episode in range(15):
         for worker_id in range(6):
-            p = mp.Process(target=evaluate, args=(shared_model, q))
+            p = mp.Process(target=evaluate, args=(shared_model,q))
     for p in processes:
         p.join()
     while not q.empty():
