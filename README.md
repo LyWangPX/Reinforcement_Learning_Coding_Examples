@@ -7,6 +7,17 @@ would be in normal python files.
 
 The framework will always be PyTorch, as a personal practice too.
 
+Normally I use cartpole for easy algorithms in this project and I skip the 
+visual input part. (which is quite trivial if you add few conv layers). 
+
+And for
+harder and visual-related algorithms I will pick various atari game as my environment.
+
+Due to time limit, I will not provide systematic analysis to any particular algorithm. 
+And be aware these are personal usage so bugs do appear frequently.
+
+If the project is mature, I will accept open issues.
+For now, however, let me dive in. (I guess no one even read this repo though)
 # PLAN: 
 ## Model-Free RL
 ### Policy Gradient
