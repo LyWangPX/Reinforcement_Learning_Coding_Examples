@@ -59,6 +59,7 @@ if __name__ == '__main__':
     # update test
     q = mp.Queue()
     num_workers = 7
+    T = 150
     processes = []
     shared_model = Actor()
     shared_model.to(device)
@@ -70,7 +71,7 @@ if __name__ == '__main__':
         processes.append(p)
         p.start()
         for worker_id in range(num_workers):
-            p = mp.Process(target=worker, args=(shared_model, optimizer))
+            p = mp.Process(target=worker, args=(shared_model, optimizer, T))
             processes.append(p)
             p.start()
         for p in processes:

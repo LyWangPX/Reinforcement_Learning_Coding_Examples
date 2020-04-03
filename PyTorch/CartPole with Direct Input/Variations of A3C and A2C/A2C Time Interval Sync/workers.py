@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 
-def worker(shared_model, optimizer):
+def worker(shared_model, optimizer, T):
     class Actor(torch.nn.Module):
         def __init__(self):
             super(Actor, self).__init__()
@@ -34,11 +34,12 @@ def worker(shared_model, optimizer):
     gamma = 0.99
     steps = []
     eps = np.finfo(np.float32).eps.item()
+    actor.load_state_dict(shared_model.state_dict())
+    t = 0
     for episode in range(1):
         action_log_history = []
         V_history = []
         for step in range(200):
-            actor.load_state_dict(shared_model.state_dict())
             # -----lines below are line-corresponding to the original algorithm----
             obs = np.reshape(obs, [1, -1])
             input_actor = Variable(torch.from_numpy(obs).float()).to(device)
@@ -48,13 +49,15 @@ def worker(shared_model, optimizer):
             action_log_history.append(action_log_probability[0][action])
             V_history.append(V)
             obs, reward, done, info = env.step(action)
-            if done:
+            t += 1
+            if done or t >= T:
                 if step == 199:
                     break
                 actor.zero_grad()
                 steps.append(step)
-                print(f'episode {episode}, step {step}', end='\r')
-                obs = env.reset()
+                if done:
+                    print(f'episode {episode}, step {step}', end='\r')
+                    obs = env.reset()
                 reward_list = np.ones((step + 1,))
                 for i in range(len(reward_list) - 2, -1, -1):
                     reward_list[i] += reward_list[i + 1] * gamma
