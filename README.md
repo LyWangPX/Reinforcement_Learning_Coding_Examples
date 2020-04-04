@@ -18,6 +18,9 @@ And be aware these are personal usage so bugs do appear frequently.
 
 If the project is mature, I will accept open issues.
 For now, however, let me dive in. (I guess no one even read this repo though)
+
+Project file structure will be changed continuously to match my needs.
+
 # PLAN: 
 ## Model-Free RL
 ### Policy Gradient
