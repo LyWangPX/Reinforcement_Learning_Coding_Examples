@@ -15,17 +15,22 @@ class Actor(torch.nn.Module):
     def __init__(self, maxlen=6000):
         super(Actor, self).__init__()
         self.fc1 = Linear(3, 128)
+        self.bn1 = torch.nn.BatchNorm1d(128)
         self.fc2 = Linear(128, 128)
-        self.fc3 = Linear(128, 1)
+        self.bn2 = torch.nn.BatchNorm1d(128)
+        self.fc3 = Linear(128, 128)
+        self.bn3 = torch.nn.BatchNorm1d(128)
+        self.fc4 = Linear(128, 1)
         self.s_buffer = deque(maxlen=maxlen)
         self.a_buffer = deque(maxlen=maxlen)
         self.r_buffer = deque(maxlen=maxlen)
         self.next_s_buffer = deque(maxlen=maxlen)
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        action = F.relu(self.fc3(x))
+        x = F.relu(self.bn1(self.fc1(x)))
+        x = F.relu(self.bn2(self.fc2(x)))
+        x = F.relu(self.bn3(self.fc3(x)))
+        action = F.tanh(self.fc4(x))
         return action
 
     def bufferin(self, s, a, r, next_s):
@@ -46,13 +51,19 @@ class Actor(torch.nn.Module):
 class Critic(torch.nn.Module):
     def __init__(self):
         super(Critic, self).__init__()
-        self.fc1 = Linear(4, 128)
-        self.fc2 = Linear(128, 128)
+        self.fc1 = Linear(3, 128)
+        self.bn1 = torch.nn.BatchNorm1d(128)
+        self.fc2 = Linear(256, 128)
+        self.bn2 = torch.nn.BatchNorm1d(128)
         self.fc3 = Linear(128, 1)
+        self.action = Linear(1, 128)
+        self.abn = torch.nn.BatchNorm1d(128)
 
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
+    def forward(self, x, a):
+        x = F.relu(self.bn1(self.fc1(x)))
+        a = F.relu(self.abn(self.action(a)))
+        x = torch.cat((x,a),1)
+        x = F.relu(self.bn2(self.fc2(x)))
         Q = F.relu(self.fc3(x))
         return Q
 
@@ -64,127 +75,153 @@ def to_input(input):
 
 
 def evaluate(target_policy, final=False):
-    env = gym.make('Pendulum-v0')
+    target_policy.eval()
+    env = NormalizedEnv(gym.make('Pendulum-v0'))
     s = env.reset()
+    gamma = 0.99
     if final:
-        steps = []
-        for episode in range(150):
+        result = []
+        for episode in range(100):
+            rewards = 0
             for step in range(200):
                 action = target_policy.forward(to_input(s))
                 s, reward, done, _ = env.step([action.detach()])
+                rewards += gamma ** (step) * reward
                 if done:
-                    steps.append(step)
+                    result.append(rewards)
                     s = env.reset()
-                    break
-        return steps
+        return result
     else:
+        result = []
         for episode in range(1):
+            rewards = 0
             for step in range(200):
                 action = target_policy.forward(to_input(s))
                 s, reward, done, _ = env.step([action.detach()])
+                rewards += reward
                 if done:
-                    return step
+                    result.append(rewards)
+                    s = env.reset()
+        return result
 
 
-def draw(steps, name, final=False ):
+def draw(steps, name):
     plt.style.use('dark_background')
     plt.figure(figsize=(10, 10))
-    if final:
-        plt.title(f'{name} DDPG on Pendulum_V0', fontsize='xx-large')
-        plt.xlabel('Rewards', fontsize='xx-large')
-        plt.ylabel('Frequency', fontsize='xx-large')
-        plt.hist(steps, range=(0, 200))
-        plt.show()
-    else:
-        mid = []
-        interval = 3
-        for i in range(len(steps) - interval):
-            mid.append(np.mean(steps[i:i + interval + 1]))
-        plt.title(f'{name} DDPG on Pendulum_V0 ', fontsize='xx-large')
-        plt.xlabel('Episodes', fontsize='xx-large')
-        plt.ylabel('Rewards', fontsize='xx-large')
-        x_fit = list(range(len(steps) - interval))
-        plt.plot(x_fit, steps[interval:], '-', c='gray', label='Episode-Wise data')
-        plt.plot(mid, '-', c='green', linewidth=5, label='Moving Average')
-        plt.legend(loc="best", prop={'size': 12})
-        plt.show()
+    mid = []
+    interval = 3
+    for i in range(len(steps) - interval):
+        mid.append(np.mean(steps[i:i + interval + 1]))
+    plt.title(f'{name} DDPG on Pendulum_V0 ', fontsize='xx-large')
+    plt.xlabel('Episodes', fontsize='xx-large')
+    plt.ylabel(f'{name}', fontsize='xx-large')
+    x_fit = list(range(len(steps) - interval))
+    plt.plot(x_fit, steps[interval:], '-', c='gray', label='Episode-Wise data')
+    plt.plot(mid, '-', c='green', linewidth=5, label='Moving Average')
+    plt.legend(loc="best", prop={'size': 12})
+    plt.show()
 
+# https://github.com/openai/gym/blob/master/gym/core.py
+class NormalizedEnv(gym.ActionWrapper):
+    """ Wrap action """
+
+    def action(self, action):
+        act_k = (self.action_space.high - self.action_space.low)/ 2.
+        act_b = (self.action_space.high + self.action_space.low)/ 2.
+        return act_k * action + act_b
+
+    def reverse_action(self, action):
+        act_k_inv = 2./(self.action_space.high - self.action_space.low)
+        act_b = (self.action_space.high + self.action_space.low)/ 2.
+        return act_k_inv * (action - act_b)
 
 def main():
     # create two identical model
     # ---hyper parameter---
     gamma = 0.99
     tau = 0.01
-    lr = 0.01
     # ---hyper parameter---
     steps = []
     with torch.no_grad():
         actor = Actor()
-        actor_optimizer = torch.optim.Adam(actor.parameters(), lr=lr)
+        actor_optimizer = torch.optim.Adam(actor.parameters(), lr=1e-4)
         target_actor = Actor()
         critic = Critic()
-        critic_optimizer = torch.optim.Adam(critic.parameters(), lr=lr)
+        critic_optimizer = torch.optim.Adam(critic.parameters(), lr=1e-3)
         target_critic = Critic()
         for target_param, param in zip(actor.parameters(), target_actor.parameters()):
             target_param.copy_(param.data)
         for target_param, param in zip(critic.parameters(), target_critic.parameters()):
             target_param.copy_(param.data)
 
-    env = gym.make('Pendulum-v0')
+    env = NormalizedEnv(gym.make('Pendulum-v0'))
     s = env.reset()
     A_loss = []
     C_loss = []
-    for episode in range(70):
+    for episode in range(150):
         rewards = 0
         for step in range(250):
-            action = (actor.forward(to_input(s))).detach() + np.random.uniform(-0.1,0.1)
+            actor.eval()
+            # LINE 1 Select Action
+            action = (actor.forward(to_input(s))).detach() + np.random.uniform(-0.1, 0.1)
+
+            # LINE 2 Execute and Observe
             next_s, reward, done, _ = env.step([float(action)])
-            rewards += reward
+
+            # LINE 3 Store
             actor.bufferin(s, action, reward, next_s)
-            a_buffer, s_buffer, r_buffer, next_s_buffer = actor.sample()
-            a_buffer = np.array(a_buffer).reshape((-1, 1))
-            s_buffer = np.array(s_buffer).reshape((-1, 3))
-            r_buffer = np.array(r_buffer).reshape((-1, 1))
-            next_s_buffer = np.array(next_s_buffer).reshape((-1, 3))
-            sa = np.append(s_buffer, a_buffer,1)
-            true_a = actor(Variable(torch.from_numpy(s_buffer).float()))
-            tensor_s = torch.from_numpy(s_buffer).float()
-            true_sa = torch.cat((tensor_s, true_a),1)
-            Q = critic(Variable(torch.from_numpy(sa).float()))
-            tensor_next_s = torch.from_numpy(next_s_buffer).float()
-            tensor_a_buffer = torch.from_numpy(a_buffer).float()
-            next_sa = torch.cat((tensor_next_s, tensor_a_buffer),1)
-            next_Q = critic(Variable(next_sa))
-            y = torch.from_numpy(r_buffer).float() + gamma * next_Q
-            critic_loss = F.mse_loss(y.detach(), Q)
-            actor_loss = -critic(Variable(true_sa).float()).mean()
-            A_loss.append(actor_loss.detach().float())
-            C_loss.append(critic_loss.detach().float())
-            critic.zero_grad()
-            critic_loss.backward(retain_graph=True)
-            critic_optimizer.step()
 
-            actor.zero_grad()
-            actor_loss.backward()
-            actor_optimizer.step()
             s = next_s
+            rewards += gamma ** step * reward
+            if len(actor.a_buffer) > 256:
+                # LINE 4 SAMPLE a minibatch
+                actor.train()
+                a_buffer, s_buffer, r_buffer, next_s_buffer = actor.sample()
+                a_buffer = np.array(a_buffer).reshape((-1, 1))
+                s_buffer = np.array(s_buffer).reshape((-1, 3))
+                r_buffer = np.array(r_buffer).reshape((-1, 1))
+                next_s_buffer = np.array(next_s_buffer).reshape((-1, 3))
+                # Checked Shape Transformation: Looks fine
 
-            for target_param, param in zip(target_actor.parameters(), actor.parameters()):
-                target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
+                # LINE 5 Set y = r + gamma next Q from target critic
+                next_a = target_actor(Variable(torch.from_numpy(next_s_buffer).float()))
+                next_Q = target_critic(torch.from_numpy(next_s_buffer).float(), next_a)
+                y = torch.from_numpy(r_buffer).float() + gamma * next_Q
 
-            for target_param, param in zip(target_critic.parameters(), critic.parameters()):
-                target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
+                # LINE 6 Update critic by minimizing the mse.
+                Q = critic(Variable(torch.from_numpy(s_buffer).float()), Variable(torch.from_numpy(a_buffer).float()))
+                critic_loss = F.mse_loss(y.detach(), Q)
+                critic.zero_grad()
+                critic_loss.backward()
+                critic_optimizer.step()
 
+                # LINE 7 Update the actor policy using sampled policy gradient
+                true_a = actor(Variable(torch.from_numpy(s_buffer).float()))
+                actor_loss = -critic(torch.from_numpy(s_buffer).float(), true_a).mean()
+                actor.zero_grad()
+                actor_loss.backward()
+                actor_optimizer.step()
+
+
+                A_loss.append(actor_loss.detach().float())
+                C_loss.append(critic_loss.detach().float())
+
+                # LINE 8 Update the target network
+                for target_param, param in zip(target_actor.parameters(), actor.parameters()):
+                    target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
+
+                for target_param, param in zip(target_critic.parameters(), critic.parameters()):
+                    target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
             if done:
                 s = env.reset()
                 steps.append(rewards)
-                print(f'episode {episode}, step {steps[-1]}')
+                print(f'episode {episode}, total rewards {steps[-1]}')
                 break
-    draw(steps)
-    draw(A_loss)
-    draw(C_loss)
+    draw(steps, 'rewards')
+    draw(A_loss, 'A_loss')
+    draw(C_loss, 'C_loss')
     hist = evaluate(target_actor, final=True)
-    draw(hist, final=True)
+    draw(hist, 'eval')
 
 
 if __name__ == '__main__':
