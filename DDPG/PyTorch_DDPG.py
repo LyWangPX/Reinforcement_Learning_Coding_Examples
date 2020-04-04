@@ -12,12 +12,15 @@ from torch.autograd import Variable
 
 
 class Actor(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, maxlen=6000):
         super(Actor, self).__init__()
         self.fc1 = Linear(3, 128)
         self.fc2 = Linear(128, 128)
         self.fc3 = Linear(128, 1)
-        self.buffer = deque(maxlen=500)
+        self.s_buffer = deque(maxlen=maxlen)
+        self.a_buffer = deque(maxlen=maxlen)
+        self.r_buffer = deque(maxlen=maxlen)
+        self.next_s_buffer = deque(maxlen=maxlen)
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
@@ -26,11 +29,18 @@ class Actor(torch.nn.Module):
         return action
 
     def bufferin(self, s, a, r, next_s):
-        self.buffer.append((s, a, r, next_s))
+        self.s_buffer.append(s)
+        self.a_buffer.append(a)
+        self.r_buffer.append(r)
+        self.next_s_buffer.append(next_s)
 
-    def sample(self, batch_size=16):
-        batches = random.sample(self.buffer, min(len(self.buffer), batch_size))
-        return batches
+    def sample(self, batch_size=256):
+        indices = np.random.choice(range(len(self.a_buffer)), size=min(len(self.a_buffer), batch_size), replace=False)
+        s_buffer = [self.s_buffer[i] for i in indices]
+        a_buffer = [self.a_buffer[i] for i in indices]
+        r_buffer = [self.r_buffer[i] for i in indices]
+        next_s_buffer = [self.next_s_buffer[i] for i in indices]
+        return a_buffer, s_buffer, r_buffer, next_s_buffer
 
 
 class Critic(torch.nn.Module):
@@ -54,17 +64,14 @@ def to_input(input):
 
 
 def evaluate(target_policy, final=False):
-    env = gym.make('CartPole-v0')
+    env = gym.make('Pendulum-v0')
     s = env.reset()
     if final:
         steps = []
         for episode in range(150):
             for step in range(200):
-                if np.random.random() < 0.25:
-                    action = np.random.randint(2)
-                else:
-                    action = target_policy.forward(to_input(s))
-                next_s, reward, done, _ = env.step(int(action))
+                action = target_policy.forward(to_input(s))
+                s, reward, done, _ = env.step([action.detach()])
                 if done:
                     steps.append(step)
                     s = env.reset()
@@ -73,20 +80,17 @@ def evaluate(target_policy, final=False):
     else:
         for episode in range(1):
             for step in range(200):
-                if np.random.random() < 0.25:
-                    action = np.random.randint(2)
-                else:
-                    action = target_policy.forward(to_input(s))
-                next_s, reward, done, _ = env.step(int(action))
+                action = target_policy.forward(to_input(s))
+                s, reward, done, _ = env.step([action.detach()])
                 if done:
                     return step
 
 
-def draw(steps, final=False):
+def draw(steps, name, final=False ):
     plt.style.use('dark_background')
     plt.figure(figsize=(10, 10))
     if final:
-        plt.title('Evaluation of trained target_policy DDPG on Pendulum_V0', fontsize='xx-large')
+        plt.title(f'{name} DDPG on Pendulum_V0', fontsize='xx-large')
         plt.xlabel('Rewards', fontsize='xx-large')
         plt.ylabel('Frequency', fontsize='xx-large')
         plt.hist(steps, range=(0, 200))
@@ -96,7 +100,7 @@ def draw(steps, final=False):
         interval = 3
         for i in range(len(steps) - interval):
             mid.append(np.mean(steps[i:i + interval + 1]))
-        plt.title('Performance of DDPG on Pendulum_V0 during training', fontsize='xx-large')
+        plt.title(f'{name} DDPG on Pendulum_V0 ', fontsize='xx-large')
         plt.xlabel('Episodes', fontsize='xx-large')
         plt.ylabel('Rewards', fontsize='xx-large')
         x_fit = list(range(len(steps) - interval))
@@ -128,41 +132,39 @@ def main():
 
     env = gym.make('Pendulum-v0')
     s = env.reset()
-
-    for episode in range(200):
-        for step in range(200):
-            if np.random.random() < 0.25:
-                action = np.random.randint(2)
-            else:
-                action = actor.forward(to_input(s))
-            next_s, reward, done, _ = env.step(int(action))
+    A_loss = []
+    C_loss = []
+    for episode in range(70):
+        rewards = 0
+        for step in range(250):
+            action = (actor.forward(to_input(s))).detach() + np.random.uniform(-0.1,0.1)
+            next_s, reward, done, _ = env.step([float(action)])
+            rewards += reward
             actor.bufferin(s, action, reward, next_s)
-            batches = actor.sample()
-            actor_loss = []
-            critic_loss = []
-            for s, action, reward, next_s in batches:
-                if type(action) != int:
-                    sa = np.append(s, action.detach())
-                else:
-                    sa = np.append(s, action)
-                true_a = actor(to_input(s))
-                true_s = torch.from_numpy(s)
-                true_sa = torch.cat((true_s.float(), true_a[0]), 0)
-                next_sa = np.append(next_s, actor(to_input(next_s)).detach())
-                Q = critic(to_input(sa))
-                next_Q = critic(to_input(next_sa))
-                y = reward + gamma * next_Q
-                critic_loss.append(F.mse_loss(Q, y.detach()))
-                actor_loss.append(critic(true_sa))
-
-            critic_loss = torch.stack(critic_loss).mean()
-
+            a_buffer, s_buffer, r_buffer, next_s_buffer = actor.sample()
+            a_buffer = np.array(a_buffer).reshape((-1, 1))
+            s_buffer = np.array(s_buffer).reshape((-1, 3))
+            r_buffer = np.array(r_buffer).reshape((-1, 1))
+            next_s_buffer = np.array(next_s_buffer).reshape((-1, 3))
+            sa = np.append(s_buffer, a_buffer,1)
+            true_a = actor(Variable(torch.from_numpy(s_buffer).float()))
+            tensor_s = torch.from_numpy(s_buffer).float()
+            true_sa = torch.cat((tensor_s, true_a),1)
+            Q = critic(Variable(torch.from_numpy(sa).float()))
+            tensor_next_s = torch.from_numpy(next_s_buffer).float()
+            tensor_a_buffer = torch.from_numpy(a_buffer).float()
+            next_sa = torch.cat((tensor_next_s, tensor_a_buffer),1)
+            next_Q = critic(Variable(next_sa))
+            y = torch.from_numpy(r_buffer).float() + gamma * next_Q
+            critic_loss = F.mse_loss(y.detach(), Q)
+            actor_loss = -critic(Variable(true_sa).float()).mean()
+            A_loss.append(actor_loss.detach().float())
+            C_loss.append(critic_loss.detach().float())
             critic.zero_grad()
             critic_loss.backward(retain_graph=True)
             critic_optimizer.step()
 
             actor.zero_grad()
-            actor_loss = -torch.stack(actor_loss).mean()
             actor_loss.backward()
             actor_optimizer.step()
             s = next_s
@@ -175,10 +177,12 @@ def main():
 
             if done:
                 s = env.reset()
-                steps.append(evaluate(target_actor))
-                print(f'episode {episode}, step {step}')
+                steps.append(rewards)
+                print(f'episode {episode}, step {steps[-1]}')
                 break
     draw(steps)
+    draw(A_loss)
+    draw(C_loss)
     hist = evaluate(target_actor, final=True)
     draw(hist, final=True)
 
