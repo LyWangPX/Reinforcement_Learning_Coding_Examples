@@ -12,7 +12,7 @@ from torch.autograd import Variable
 
 
 class Actor(torch.nn.Module):
-    def __init__(self, maxlen=6000):
+    def __init__(self, maxlen=8192):
         super(Actor, self).__init__()
         self.fc1 = Linear(3, 128)
         self.bn1 = torch.nn.BatchNorm1d(128)
@@ -39,7 +39,7 @@ class Actor(torch.nn.Module):
         self.r_buffer.append(r)
         self.next_s_buffer.append(next_s)
 
-    def sample(self, batch_size=256):
+    def sample(self, batch_size=512):
         indices = np.random.choice(range(len(self.a_buffer)), size=min(len(self.a_buffer), batch_size), replace=False)
         s_buffer = [self.s_buffer[i] for i in indices]
         a_buffer = [self.a_buffer[i] for i in indices]
@@ -68,25 +68,24 @@ class Critic(torch.nn.Module):
         return Q
 
 
-def to_input(input):
+def to_input(input, device):
     input = np.reshape(input, [1, -1])
     input_actor = Variable(torch.from_numpy(input).float())
-    return input_actor
+    return input_actor.to(device)
 
 
-def evaluate(target_policy, final=False):
+def evaluate(target_policy, device, final=False):
     target_policy.eval()
     env = NormalizedEnv(gym.make('Pendulum-v0'))
     s = env.reset()
-    gamma = 0.99
     if final:
         result = []
         for episode in range(100):
             rewards = 0
             for step in range(200):
-                action = target_policy.forward(to_input(s))
+                action = target_policy.forward(to_input(s, device))
                 s, reward, done, _ = env.step([action.detach()])
-                rewards += gamma ** (step) * reward
+                rewards += reward
                 if done:
                     result.append(rewards)
                     s = env.reset()
@@ -96,8 +95,8 @@ def evaluate(target_policy, final=False):
         for episode in range(1):
             rewards = 0
             for step in range(200):
-                action = target_policy.forward(to_input(s))
-                s, reward, done, _ = env.step([action.detach()])
+                action = target_policy.forward(to_input(s, device))
+                s, reward, done, _ = env.step([float(action)])
                 rewards += reward
                 if done:
                     result.append(rewards)
@@ -142,13 +141,14 @@ def main():
     tau = 0.01
     # ---hyper parameter---
     steps = []
+    device = 'cuda'
     with torch.no_grad():
-        actor = Actor()
+        actor = Actor().to(device)
         actor_optimizer = torch.optim.Adam(actor.parameters(), lr=1e-4)
-        target_actor = Actor()
-        critic = Critic()
+        target_actor = Actor().to(device)
+        critic = Critic().to(device)
         critic_optimizer = torch.optim.Adam(critic.parameters(), lr=1e-3)
-        target_critic = Critic()
+        target_critic = Critic().to(device)
         for target_param, param in zip(actor.parameters(), target_actor.parameters()):
             target_param.copy_(param.data)
         for target_param, param in zip(critic.parameters(), target_critic.parameters()):
@@ -158,12 +158,12 @@ def main():
     s = env.reset()
     A_loss = []
     C_loss = []
-    for episode in range(150):
+    for episode in range(15):
         rewards = 0
         for step in range(250):
             actor.eval()
             # LINE 1 Select Action
-            action = (actor.forward(to_input(s))).detach() + np.random.uniform(-0.1, 0.1)
+            action = (actor.forward(to_input(s, device))).detach() + np.random.uniform(-0.1, 0.1)
 
             # LINE 2 Execute and Observe
             next_s, reward, done, _ = env.step([float(action)])
@@ -172,39 +172,39 @@ def main():
             actor.bufferin(s, action, reward, next_s)
 
             s = next_s
-            rewards += gamma ** step * reward
-            if len(actor.a_buffer) > 256:
+            rewards += reward
+            if len(actor.a_buffer) > 512:
                 # LINE 4 SAMPLE a minibatch
                 actor.train()
                 a_buffer, s_buffer, r_buffer, next_s_buffer = actor.sample()
-                a_buffer = np.array(a_buffer).reshape((-1, 1))
-                s_buffer = np.array(s_buffer).reshape((-1, 3))
-                r_buffer = np.array(r_buffer).reshape((-1, 1))
-                next_s_buffer = np.array(next_s_buffer).reshape((-1, 3))
+                a_buffer = np.array(a_buffer, dtype=np.float16).reshape((-1, 1))
+                s_buffer = np.array(s_buffer, dtype=np.float16).reshape((-1, 3))
+                r_buffer = np.array(r_buffer, dtype=np.float16).reshape((-1, 1))
+                next_s_buffer = np.array(next_s_buffer, dtype=np.float16).reshape((-1, 3))
                 # Checked Shape Transformation: Looks fine
 
                 # LINE 5 Set y = r + gamma next Q from target critic
-                next_a = target_actor(Variable(torch.from_numpy(next_s_buffer).float()))
-                next_Q = target_critic(torch.from_numpy(next_s_buffer).float(), next_a)
-                y = torch.from_numpy(r_buffer).float() + gamma * next_Q
+                next_a = target_actor(Variable(torch.from_numpy(next_s_buffer).float().to(device)))
+                next_Q = target_critic(torch.from_numpy(next_s_buffer).float().to(device), next_a.to(device))
+                y = torch.from_numpy(r_buffer).float().to(device) + gamma * next_Q
 
                 # LINE 6 Update critic by minimizing the mse.
-                Q = critic(Variable(torch.from_numpy(s_buffer).float()), Variable(torch.from_numpy(a_buffer).float()))
+                Q = critic(Variable(torch.from_numpy(s_buffer).float()).to(device), Variable(torch.from_numpy(a_buffer).float()).to(device))
                 critic_loss = F.mse_loss(y.detach(), Q)
                 critic.zero_grad()
                 critic_loss.backward()
                 critic_optimizer.step()
 
                 # LINE 7 Update the actor policy using sampled policy gradient
-                true_a = actor(Variable(torch.from_numpy(s_buffer).float()))
-                actor_loss = -critic(torch.from_numpy(s_buffer).float(), true_a).mean()
+                true_a = actor(Variable(torch.from_numpy(s_buffer).float()).to(device))
+                actor_loss = -critic(torch.from_numpy(s_buffer).float().to(device), true_a.to(device)).mean()
                 actor.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
 
 
-                A_loss.append(actor_loss.detach().float())
-                C_loss.append(critic_loss.detach().float())
+                A_loss.append(actor_loss.item())
+                C_loss.append(critic_loss.item())
 
                 # LINE 8 Update the target network
                 for target_param, param in zip(target_actor.parameters(), actor.parameters()):
@@ -220,7 +220,7 @@ def main():
     draw(steps, 'rewards')
     draw(A_loss, 'A_loss')
     draw(C_loss, 'C_loss')
-    hist = evaluate(target_actor, final=True)
+    hist = evaluate(target_actor,device, final=True)
     draw(hist, 'eval')
 
 
