@@ -12,7 +12,7 @@ from torch.autograd import Variable
 
 
 class Actor(torch.nn.Module):
-    def __init__(self, maxlen=8192):
+    def __init__(self, maxlen=1024):
         super(Actor, self).__init__()
         self.fc1 = Linear(3, 128)
         self.bn1 = torch.nn.BatchNorm1d(128)
@@ -39,7 +39,7 @@ class Actor(torch.nn.Module):
         self.r_buffer.append(r)
         self.next_s_buffer.append(next_s)
 
-    def sample(self, batch_size=512):
+    def sample(self, batch_size=64):
         indices = np.random.choice(range(len(self.a_buffer)), size=min(len(self.a_buffer), batch_size), replace=False)
         s_buffer = [self.s_buffer[i] for i in indices]
         a_buffer = [self.a_buffer[i] for i in indices]
@@ -62,7 +62,7 @@ class Critic(torch.nn.Module):
     def forward(self, x, a):
         x = F.relu(self.bn1(self.fc1(x)))
         a = F.relu(self.abn(self.action(a)))
-        x = torch.cat((x,a),1)
+        x = torch.cat((x, a), 1)
         x = F.relu(self.bn2(self.fc2(x)))
         Q = F.relu(self.fc3(x))
         return Q
@@ -120,19 +120,35 @@ def draw(steps, name):
     plt.legend(loc="best", prop={'size': 12})
     plt.show()
 
+
 # https://github.com/openai/gym/blob/master/gym/core.py
 class NormalizedEnv(gym.ActionWrapper):
     """ Wrap action """
 
     def action(self, action):
-        act_k = (self.action_space.high - self.action_space.low)/ 2.
-        act_b = (self.action_space.high + self.action_space.low)/ 2.
+        act_k = (self.action_space.high - self.action_space.low) / 2.
+        act_b = (self.action_space.high + self.action_space.low) / 2.
         return act_k * action + act_b
 
     def reverse_action(self, action):
-        act_k_inv = 2./(self.action_space.high - self.action_space.low)
-        act_b = (self.action_space.high + self.action_space.low)/ 2.
+        act_k_inv = 2. / (self.action_space.high - self.action_space.low)
+        act_b = (self.action_space.high + self.action_space.low) / 2.
         return act_k_inv * (action - act_b)
+
+class Ornstein_Uhlenbeck_Process:
+    def __init__(self, dt = 0.1):
+        self.theta = 0.15
+        self.sigma = 0.2
+        self.dt = dt
+        self.x = 0
+
+    def step(self):
+        dW = self.dt**2*np.random.normal()
+        dx = -self.theta * self.x * self.dt + self.sigma*dW
+        self.x += dx
+        return self.x
+
+
 
 def main():
     # create two identical model
@@ -141,7 +157,7 @@ def main():
     tau = 0.01
     # ---hyper parameter---
     steps = []
-    device = 'cuda'
+    device = 'cpu'
     with torch.no_grad():
         actor = Actor().to(device)
         actor_optimizer = torch.optim.Adam(actor.parameters(), lr=1e-4)
@@ -158,12 +174,19 @@ def main():
     s = env.reset()
     A_loss = []
     C_loss = []
-    for episode in range(15):
+    for episode in range(50):
         rewards = 0
+        dt = 0.001
+        x = 0
+        sigma = 0.2
+        theta = 0.15
         for step in range(250):
+            dW = dt*dt*np.random.normal()
+            dx = -theta * x * dt + sigma * dW
+            x += dx
             actor.eval()
             # LINE 1 Select Action
-            action = (actor.forward(to_input(s, device))).detach() + np.random.uniform(-0.1, 0.1)
+            action = (actor.forward(to_input(s, device))).detach() + x
 
             # LINE 2 Execute and Observe
             next_s, reward, done, _ = env.step([float(action)])
@@ -173,7 +196,7 @@ def main():
 
             s = next_s
             rewards += reward
-            if len(actor.a_buffer) > 512:
+            if len(actor.a_buffer) > 64:
                 # LINE 4 SAMPLE a minibatch
                 actor.train()
                 a_buffer, s_buffer, r_buffer, next_s_buffer = actor.sample()
@@ -189,19 +212,20 @@ def main():
                 y = torch.from_numpy(r_buffer).float().to(device) + gamma * next_Q
 
                 # LINE 6 Update critic by minimizing the mse.
-                Q = critic(Variable(torch.from_numpy(s_buffer).float()).to(device), Variable(torch.from_numpy(a_buffer).float()).to(device))
-                critic_loss = F.mse_loss(y.detach(), Q)
+                Q = critic(Variable(torch.from_numpy(s_buffer).float()).to(device),
+                           Variable(torch.from_numpy(a_buffer).float()).to(device))
+                critic_loss = F.mse_loss(Q, y.detach())
                 critic.zero_grad()
                 critic_loss.backward()
                 critic_optimizer.step()
 
                 # LINE 7 Update the actor policy using sampled policy gradient
                 true_a = actor(Variable(torch.from_numpy(s_buffer).float()).to(device))
-                actor_loss = -critic(torch.from_numpy(s_buffer).float().to(device), true_a.to(device)).mean()
+                actor_loss_total = critic.forward(torch.from_numpy(s_buffer).float().to(device), true_a.to(device))
+                actor_loss = -actor_loss_total.mean()
                 actor.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
-
 
                 A_loss.append(actor_loss.item())
                 C_loss.append(critic_loss.item())
@@ -220,7 +244,7 @@ def main():
     draw(steps, 'rewards')
     draw(A_loss, 'A_loss')
     draw(C_loss, 'C_loss')
-    hist = evaluate(target_actor,device, final=True)
+    hist = evaluate(target_actor, device, final=True)
     draw(hist, 'eval')
 
 
