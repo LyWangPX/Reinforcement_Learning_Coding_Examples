@@ -30,7 +30,7 @@ class Actor(torch.nn.Module):
         x = F.relu(self.bn1(self.fc1(x)))
         x = F.relu(self.bn2(self.fc2(x)))
         x = F.relu(self.bn3(self.fc3(x)))
-        action = F.tanh(self.fc4(x))
+        action = torch.tanh(self.fc4(x))
         return action
 
     def bufferin(self, s, a, r, next_s):
@@ -51,13 +51,13 @@ class Actor(torch.nn.Module):
 class Critic(torch.nn.Module):
     def __init__(self):
         super(Critic, self).__init__()
-        self.fc1 = Linear(3, 128)
-        self.bn1 = torch.nn.BatchNorm1d(128)
-        self.fc2 = Linear(256, 128)
-        self.bn2 = torch.nn.BatchNorm1d(128)
-        self.fc3 = Linear(128, 1)
-        self.action = Linear(1, 128)
-        self.abn = torch.nn.BatchNorm1d(128)
+        self.fc1 = Linear(3, 256)
+        self.bn1 = torch.nn.BatchNorm1d(256)
+        self.fc2 = Linear(512, 512)
+        self.bn2 = torch.nn.BatchNorm1d(512)
+        self.fc3 = Linear(512, 1)
+        self.action = Linear(1, 256)
+        self.abn = torch.nn.BatchNorm1d(256)
 
     def forward(self, x, a):
         x = F.relu(self.bn1(self.fc1(x)))
@@ -135,19 +135,19 @@ class NormalizedEnv(gym.ActionWrapper):
         act_b = (self.action_space.high + self.action_space.low) / 2.
         return act_k_inv * (action - act_b)
 
+
 class Ornstein_Uhlenbeck_Process:
-    def __init__(self, dt = 0.1):
+    def __init__(self, dt=0.1):
         self.theta = 0.15
         self.sigma = 0.2
         self.dt = dt
         self.x = 0
 
     def step(self):
-        dW = self.dt**2*np.random.normal()
-        dx = -self.theta * self.x * self.dt + self.sigma*dW
+        dW = self.dt ** 2 * np.random.normal()
+        dx = -self.theta * self.x * self.dt + self.sigma * dW
         self.x += dx
         return self.x
-
 
 
 def main():
@@ -180,13 +180,14 @@ def main():
         x = 0
         sigma = 0.2
         theta = 0.15
+        random_process = Ornstein_Uhlenbeck_Process()
         for step in range(250):
-            dW = dt*dt*np.random.normal()
+            dW = dt * dt * np.random.normal()
             dx = -theta * x * dt + sigma * dW
             x += dx
             actor.eval()
             # LINE 1 Select Action
-            action = (actor.forward(to_input(s, device))).detach() + x
+            action = (actor.forward(to_input(s, device))).detach() + random_process.step()
 
             # LINE 2 Execute and Observe
             next_s, reward, done, _ = env.step([float(action)])
@@ -215,7 +216,7 @@ def main():
                 Q = critic(Variable(torch.from_numpy(s_buffer).float()).to(device),
                            Variable(torch.from_numpy(a_buffer).float()).to(device))
                 critic_loss = F.mse_loss(Q, y.detach())
-                critic.zero_grad()
+                critic_optimizer.zero_grad()
                 critic_loss.backward()
                 critic_optimizer.step()
 
@@ -223,7 +224,7 @@ def main():
                 true_a = actor(Variable(torch.from_numpy(s_buffer).float()).to(device))
                 actor_loss_total = critic.forward(torch.from_numpy(s_buffer).float().to(device), true_a.to(device))
                 actor_loss = -actor_loss_total.mean()
-                actor.zero_grad()
+                actor_optimizer.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
 
