@@ -12,25 +12,22 @@ from torch.autograd import Variable
 
 
 class Actor(torch.nn.Module):
-    def __init__(self, maxlen=1024):
+    def __init__(self, maxlen=100000):
         super(Actor, self).__init__()
-        self.fc1 = Linear(3, 128)
-        self.bn1 = torch.nn.BatchNorm1d(128)
-        self.fc2 = Linear(128, 128)
-        self.bn2 = torch.nn.BatchNorm1d(128)
-        self.fc3 = Linear(128, 128)
-        self.bn3 = torch.nn.BatchNorm1d(128)
-        self.fc4 = Linear(128, 1)
+        self.fc1 = Linear(3, 256)
+        self.fc2 = Linear(256, 256)
+        self.fc3 = Linear(256, 256)
+        self.fc4 = Linear(256, 1)
         self.s_buffer = deque(maxlen=maxlen)
         self.a_buffer = deque(maxlen=maxlen)
         self.r_buffer = deque(maxlen=maxlen)
         self.next_s_buffer = deque(maxlen=maxlen)
 
     def forward(self, x):
-        x = F.relu(self.bn1(self.fc1(x)))
-        x = F.relu(self.bn2(self.fc2(x)))
-        x = F.relu(self.bn3(self.fc3(x)))
-        action = torch.tanh(self.fc4(x))
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        action = 2*torch.tanh(self.fc4(x))
         return action
 
     def bufferin(self, s, a, r, next_s):
@@ -52,18 +49,15 @@ class Critic(torch.nn.Module):
     def __init__(self):
         super(Critic, self).__init__()
         self.fc1 = Linear(3, 256)
-        self.bn1 = torch.nn.BatchNorm1d(256)
         self.fc2 = Linear(512, 512)
-        self.bn2 = torch.nn.BatchNorm1d(512)
         self.fc3 = Linear(512, 1)
         self.action = Linear(1, 256)
-        self.abn = torch.nn.BatchNorm1d(256)
 
     def forward(self, x, a):
-        x = F.relu(self.bn1(self.fc1(x)))
-        a = F.relu(self.abn(self.action(a)))
+        x = F.relu(self.fc1(x))
+        a = F.relu(self.action(a))
         x = torch.cat((x, a), 1)
-        x = F.relu(self.bn2(self.fc2(x)))
+        x = F.relu(self.fc2(x))
         Q = F.relu(self.fc3(x))
         return Q
 
@@ -158,34 +152,28 @@ def main():
     # ---hyper parameter---
     steps = []
     device = 'cpu'
-    with torch.no_grad():
-        actor = Actor().to(device)
-        actor_optimizer = torch.optim.Adam(actor.parameters(), lr=1e-4)
-        target_actor = Actor().to(device)
-        critic = Critic().to(device)
-        critic_optimizer = torch.optim.Adam(critic.parameters(), lr=1e-3)
-        target_critic = Critic().to(device)
-        for target_param, param in zip(actor.parameters(), target_actor.parameters()):
-            target_param.copy_(param.data)
-        for target_param, param in zip(critic.parameters(), target_critic.parameters()):
-            target_param.copy_(param.data)
+    actor = Actor().to(device)
+    actor_optimizer = torch.optim.Adam(actor.parameters(), lr=1e-4)
+    target_actor = Actor().to(device)
+    critic = Critic().to(device)
+    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=1e-3)
+    target_critic = Critic().to(device)
+    for target_param, param in zip(target_actor.parameters(), actor.parameters()):
+        target_param.data.copy_(param.data)
+    for target_param, param in zip(target_critic.parameters(), critic.parameters()):
+        target_param.data.copy_(param.data)
 
-    env = NormalizedEnv(gym.make('Pendulum-v0'))
+    env = gym.make('Pendulum-v0')
     s = env.reset()
     A_loss = []
     C_loss = []
-    for episode in range(50):
+    actor.train()
+    critic.train()
+    for episode in range(100):
         rewards = 0
-        dt = 0.001
-        x = 0
-        sigma = 0.2
-        theta = 0.15
-        random_process = Ornstein_Uhlenbeck_Process()
+        random_process = Ornstein_Uhlenbeck_Process(dt=0.1)
         for step in range(250):
-            dW = dt * dt * np.random.normal()
-            dx = -theta * x * dt + sigma * dW
-            x += dx
-            actor.eval()
+
             # LINE 1 Select Action
             action = (actor.forward(to_input(s, device))).detach() + random_process.step()
 
@@ -199,34 +187,34 @@ def main():
             rewards += reward
             if len(actor.a_buffer) > 64:
                 # LINE 4 SAMPLE a minibatch
-                actor.train()
                 a_buffer, s_buffer, r_buffer, next_s_buffer = actor.sample()
-                a_buffer = np.array(a_buffer, dtype=np.float16).reshape((-1, 1))
-                s_buffer = np.array(s_buffer, dtype=np.float16).reshape((-1, 3))
-                r_buffer = np.array(r_buffer, dtype=np.float16).reshape((-1, 1))
-                next_s_buffer = np.array(next_s_buffer, dtype=np.float16).reshape((-1, 3))
+                a_buffer = np.array(a_buffer, dtype=np.float32).reshape((-1, 1))
+                s_buffer = np.array(s_buffer, dtype=np.float32).reshape((-1, 3))
+                r_buffer = np.array(r_buffer, dtype=np.float32).reshape((-1, 1))
+                next_s_buffer = np.array(next_s_buffer, dtype=np.float32).reshape((-1, 3))
                 # Checked Shape Transformation: Looks fine
 
                 # LINE 5 Set y = r + gamma next Q from target critic
                 next_a = target_actor(Variable(torch.from_numpy(next_s_buffer).float().to(device)))
-                next_Q = target_critic(torch.from_numpy(next_s_buffer).float().to(device), next_a.to(device))
+                next_Q = target_critic(Variable(torch.from_numpy(next_s_buffer).float().to(device)), Variable(next_a.to(device)))
                 y = torch.from_numpy(r_buffer).float().to(device) + gamma * next_Q
+
+
+                # LINE 7 Update the actor policy using sampled policy gradient
+                true_a = actor(Variable(torch.from_numpy(s_buffer).float()).to(device))
+                actor_loss_total = critic.forward(Variable(torch.from_numpy(s_buffer).float().to(device)), Variable(true_a.to(device)))
+                actor_loss = -actor_loss_total.sum()/64
+                actor_optimizer.zero_grad()
+                actor_loss.backward()
+                actor_optimizer.step()
 
                 # LINE 6 Update critic by minimizing the mse.
                 Q = critic(Variable(torch.from_numpy(s_buffer).float()).to(device),
                            Variable(torch.from_numpy(a_buffer).float()).to(device))
-                critic_loss = F.mse_loss(Q, y.detach())
+                critic_loss = torch.nn.functional.mse_loss(Q, y.detach())
                 critic_optimizer.zero_grad()
                 critic_loss.backward()
                 critic_optimizer.step()
-
-                # LINE 7 Update the actor policy using sampled policy gradient
-                true_a = actor(Variable(torch.from_numpy(s_buffer).float()).to(device))
-                actor_loss_total = critic.forward(torch.from_numpy(s_buffer).float().to(device), true_a.to(device))
-                actor_loss = -actor_loss_total.mean()
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
 
                 A_loss.append(actor_loss.item())
                 C_loss.append(critic_loss.item())
