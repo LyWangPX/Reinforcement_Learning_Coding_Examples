@@ -48,17 +48,16 @@ class Actor(torch.nn.Module):
 class Critic(torch.nn.Module):
     def __init__(self):
         super(Critic, self).__init__()
-        self.fc1 = Linear(3, 256)
-        self.fc2 = Linear(512, 512)
+        self.fc1 = Linear(4, 256)
+        self.fc2 = Linear(256, 512)
         self.fc3 = Linear(512, 1)
         self.action = Linear(1, 256)
 
     def forward(self, x, a):
+        x = torch.cat([x,a],1)
         x = F.relu(self.fc1(x))
-        a = F.relu(self.action(a))
-        x = torch.cat((x, a), 1)
         x = F.relu(self.fc2(x))
-        Q = F.relu(self.fc3(x))
+        Q = self.fc3(x)
         return Q
 
 
@@ -71,7 +70,7 @@ def evaluate(target_policy, device, final=False):
         for episode in range(100):
             rewards = 0
             for step in range(200):
-                action = target_policy.forward(to_input(s, device))
+                action = target_policy.forward(torch.FloatTensor(s))
                 s, reward, done, _ = env.step([action.detach()])
                 rewards += reward
                 if done:
@@ -83,7 +82,7 @@ def evaluate(target_policy, device, final=False):
         for episode in range(1):
             rewards = 0
             for step in range(200):
-                action = target_policy.forward(to_input(s, device))
+                action = target_policy.forward(torch.FloatTensor(s))
                 s, reward, done, _ = env.step([float(action)])
                 rewards += reward
                 if done:
@@ -125,7 +124,7 @@ class NormalizedEnv(gym.ActionWrapper):
 
 
 class Ornstein_Uhlenbeck_Process:
-    def __init__(self, dt=0.1):
+    def __init__(self, dt=0.3):
         self.theta = 0.15
         self.sigma = 0.2
         self.dt = dt
@@ -178,25 +177,25 @@ def main():
 
             s = next_s
             rewards += reward
-            if len(actor.a_buffer) > 64:
+            if len(actor.a_buffer) > 180:
                 # LINE 4 SAMPLE a minibatch
                 a_buffer, s_buffer, r_buffer, next_s_buffer = actor.sample()
-                a_buffer = torch.FloatTensor(list(a_buffer))
-                s_buffer = torch.FloatTensor(list(a_buffer))
-                r_buffer = torch.FloatTensor(list(a_buffer))
-                next_s_buffer = torch.FloatTensor(list(a_buffer))
+                a_buffer = torch.FloatTensor(a_buffer).view(-1,1)
+                s_buffer = torch.FloatTensor(s_buffer).view(-1,3)
+                r_buffer = torch.FloatTensor(r_buffer).view(-1,1)
+                next_s_buffer = torch.FloatTensor(next_s_buffer).view(-1,3)
 
                 # LINE 5 Set y = r + gamma next Q from target critic
                 next_a = target_actor(next_s_buffer.to(device))
                 next_Q = target_critic(next_s_buffer.to(device), next_a.to(device))
-                y = torch.from_numpy(r_buffer).float().to(device) + gamma * next_Q
+                y = r_buffer.to(device) + gamma * next_Q
 
 
                 # LINE 7 Update the actor policy using sampled policy gradient
-                true_a = actor(Variable(torch.from_numpy(s_buffer).float()).to(device))
+                true_a = actor(s_buffer.to(device))
                 actor_loss_total = critic.forward(s_buffer.to(device), true_a.to(device))
-                actor_loss = -actor_loss_total.sum()/64
-                actor_optimizer.zero_grad()
+                actor_loss = -actor_loss_total.mean()
+                actor.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
 
