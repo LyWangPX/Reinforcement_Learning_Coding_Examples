@@ -62,12 +62,6 @@ class Critic(torch.nn.Module):
         return Q
 
 
-def to_input(input, device):
-    input = np.reshape(input, [1, -1])
-    input_actor = Variable(torch.from_numpy(input).float())
-    return input_actor.to(device)
-
-
 def evaluate(target_policy, device, final=False):
     target_policy.eval()
     env = NormalizedEnv(gym.make('Pendulum-v0'))
@@ -175,11 +169,10 @@ def main():
         for step in range(250):
 
             # LINE 1 Select Action
-            action = (actor.forward(to_input(s, device))).detach() + random_process.step()
+            action = (actor.forward(torch.FloatTensor(s)) + random_process.step())
 
             # LINE 2 Execute and Observe
-            next_s, reward, done, _ = env.step([float(action)])
-
+            next_s, reward, done, _ = env.step(action.detach())
             # LINE 3 Store
             actor.bufferin(s, action, reward, next_s)
 
@@ -188,29 +181,28 @@ def main():
             if len(actor.a_buffer) > 64:
                 # LINE 4 SAMPLE a minibatch
                 a_buffer, s_buffer, r_buffer, next_s_buffer = actor.sample()
-                a_buffer = np.array(a_buffer, dtype=np.float32).reshape((-1, 1))
-                s_buffer = np.array(s_buffer, dtype=np.float32).reshape((-1, 3))
-                r_buffer = np.array(r_buffer, dtype=np.float32).reshape((-1, 1))
-                next_s_buffer = np.array(next_s_buffer, dtype=np.float32).reshape((-1, 3))
-                # Checked Shape Transformation: Looks fine
+                a_buffer = torch.FloatTensor(list(a_buffer))
+                s_buffer = torch.FloatTensor(list(a_buffer))
+                r_buffer = torch.FloatTensor(list(a_buffer))
+                next_s_buffer = torch.FloatTensor(list(a_buffer))
 
                 # LINE 5 Set y = r + gamma next Q from target critic
-                next_a = target_actor(Variable(torch.from_numpy(next_s_buffer).float().to(device)))
-                next_Q = target_critic(Variable(torch.from_numpy(next_s_buffer).float().to(device)), Variable(next_a.to(device)))
+                next_a = target_actor(next_s_buffer.to(device))
+                next_Q = target_critic(next_s_buffer.to(device), next_a.to(device))
                 y = torch.from_numpy(r_buffer).float().to(device) + gamma * next_Q
 
 
                 # LINE 7 Update the actor policy using sampled policy gradient
                 true_a = actor(Variable(torch.from_numpy(s_buffer).float()).to(device))
-                actor_loss_total = critic.forward(Variable(torch.from_numpy(s_buffer).float().to(device)), Variable(true_a.to(device)))
+                actor_loss_total = critic.forward(s_buffer.to(device), true_a.to(device))
                 actor_loss = -actor_loss_total.sum()/64
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
 
                 # LINE 6 Update critic by minimizing the mse.
-                Q = critic(Variable(torch.from_numpy(s_buffer).float()).to(device),
-                           Variable(torch.from_numpy(a_buffer).float()).to(device))
+                Q = critic(s_buffer.to(device),
+                           a_buffer.float().to(device))
                 critic_loss = torch.nn.functional.mse_loss(Q, y.detach())
                 critic_optimizer.zero_grad()
                 critic_loss.backward()
