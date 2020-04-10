@@ -35,7 +35,7 @@ Project file structure will be changed continuously to match my needs.
 - [x] Experimental trial, off-policy Actor Critic using naive bootstrap (failed)
 - [x] Fail log of above experiment
 - [x] DPG (I will skip this and jump to DDPG) 
-- [ ] DDPG
+- [x] DDPG
 - [ ] D4PG
 - [ ] MADDPG
 - [ ] TRPO
