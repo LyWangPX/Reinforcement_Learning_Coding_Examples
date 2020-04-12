@@ -48,12 +48,10 @@ Project file structure will be changed continuously to match my needs.
 - [ ] SVPG
 - [ ] IMPALA
 ### Deep Q Learning 
-- [ ] DQN
-- [ ] DRQN for POMDP
-- [ ] Dueling DQN
-- [ ] Double DQN
-- [ ] PER
+- [X] Dueling DDQN
+- [ ] Dueling DDQN + PER
 - [ ] Rainbow DQN
+- [ ] Ape-X
 ### Distributed RL 
 - [ ] C51
 - [ ] QR-DQN
