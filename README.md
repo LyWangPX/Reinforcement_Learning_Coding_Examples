@@ -44,7 +44,7 @@ Project file structure will be changed continuously to match my needs.
 - [ ] IMPALA
 ### Deep Q Learning 
 - [X] Dueling DDQN
-- [ ] Dueling DDQN + PER
+- [x] Dueling DDQN + PER
 - [ ] Rainbow DQN
 - [ ] Ape-X
 ### Distributed RL 
