@@ -1,14 +1,14 @@
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
-from torch.nn import Linear
 import torch.nn.functional as F
 from collections import deque
-import random
 import gym
 import matplotlib.pyplot as plt
 from torch.nn import Linear, ReLU
-from torch.autograd import Variable
+
+"""
+This is a vanilla implementation of DDPG. (without PER)
+"""
 
 
 class Actor(torch.nn.Module):

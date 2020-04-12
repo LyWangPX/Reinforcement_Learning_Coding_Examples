@@ -3,9 +3,12 @@ import gym
 import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
-from torch.nn import Linear, ReLU
+from torch.nn import Linear
 from collections import deque
 
+"""
+This is a vanilla Dueling Double DQN without PER.
+"""
 
 class Q_network(torch.nn.Module):
     def __init__(self, n_action=2):
