@@ -28,13 +28,8 @@ Project file structure will be changed continuously to match my needs.
 - [x] Off-Policy REINFORCE
 - [x] Basic Actor Critic
 - [x] Advantage Actor Critic using Huber loss and Entropy 
-- [x] A3C async using time interval
-- [x] A3C async using episode
-- [x] A2C sync using time interval
-- [x] A2C sync using episode
-- [x] Experimental trial, off-policy Actor Critic using naive bootstrap (failed)
-- [x] Fail log of above experiment
-- [x] DPG (I will skip this and jump to DDPG) 
+- [x] A3C
+- [x] A2C 
 - [x] DDPG
 - [ ] D4PG
 - [ ] MADDPG
